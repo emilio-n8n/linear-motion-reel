@@ -36,5 +36,11 @@ fc-cache -f >/dev/null
 echo "==> python deps"
 pip install --quiet --no-input numpy >/dev/null
 
+# python3-gi lands in the Debian dist-packages tree, which Colab's interpreter
+# does not search by default. Exported rather than patched into a file so every
+# subsequent process in the session inherits it.
+export PYTHONPATH="/usr/lib/python3/dist-packages:${PYTHONPATH:-}"
+echo "    PYTHONPATH=$PYTHONPATH"
+
 echo "==> verifying"
 python3 "$REPO_ROOT/tools/check_env.py"

@@ -23,6 +23,13 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
 
+# python3-gi installs into the Debian dist-packages directory, which Colab's
+# interpreter does not always search. Without this, `import gi` fails on a
+# Colab runtime even though the apt install succeeded.
+_DIST = "/usr/lib/python3/dist-packages"
+if os.path.isdir(_DIST) and _DIST not in sys.path:
+    sys.path.append(_DIST)
+
 REQUIRED_BINARIES = ["rsvg-convert", "ffmpeg", "fc-list"]
 REQUIRED_FAMILIES = ["Inter", "Inter Display", "JetBrains Mono"]
 
