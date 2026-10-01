@@ -1,0 +1,8 @@
+# Render intermediates: thousands of PNG frames, regenerable from src/.
+.build/
+
+# Output master
+out/
+
+__pycache__/
+*.pyc
