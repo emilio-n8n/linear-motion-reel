@@ -157,7 +157,10 @@ class Doc:
         transform: str | None = None,
         filt: str | None = None,
         extra: str = "",
+        width: float | None = None,
     ) -> str:
+        # `width` accepted as an alias for `stroke_width`; see the note on line().
+        stroke_width = width if width is not None else stroke_width
         a = [f'<rect x="{_n(x)}" y="{_n(y)}" width="{_n(max(w, 0))}" height="{_n(max(h, 0))}" fill="{fill}"']
         if rx:
             a.append(f' rx="{_n(rx)}"')
@@ -179,7 +182,10 @@ class Doc:
         return s
 
     def circle(self, cx: float, cy: float, r: float, fill: str = "none", opacity: float | None = None,
-               stroke: str | None = None, stroke_width: float | None = None, filt: str | None = None) -> str:
+               stroke: str | None = None, stroke_width: float | None = None, filt: str | None = None,
+               width: float | None = None) -> str:
+        # `width` accepted as an alias for `stroke_width`; see the note on line().
+        stroke_width = width if width is not None else stroke_width
         a = [f'<circle cx="{_n(cx)}" cy="{_n(cy)}" r="{_n(max(r, 0))}" fill="{fill}"']
         if opacity is not None:
             a.append(f' opacity="{_n(opacity)}"')
@@ -194,8 +200,13 @@ class Doc:
         self.add(s)
         return s
 
-    def line(self, x1: float, y1: float, x2: float, y2: float, stroke: str, width: float = 1.0,
-             opacity: float | None = None, cap: str = "butt", filt: str | None = None) -> str:
+    def line(self, x1: float, y1: float, x2: float, y2: float, stroke: str,
+             width: float | None = None, opacity: float | None = None, cap: str = "butt",
+             filt: str | None = None, stroke_width: float | None = None) -> str:
+        # Both names accepted: `stroke_width` matches rect/circle, `width` reads
+        # better for a line. Having only one of them on each primitive is how you
+        # end up writing `width=` on a rect and getting a TypeError.
+        width = stroke_width if stroke_width is not None else (1.0 if width is None else width)
         a = [
             f'<line x1="{_n(x1)}" y1="{_n(y1)}" x2="{_n(x2)}" y2="{_n(y2)}" '
             f'stroke="{stroke}" stroke-width="{_n(width)}" stroke-linecap="{cap}"'
@@ -211,7 +222,9 @@ class Doc:
 
     def path(self, d: str, fill: str = "none", stroke: str | None = None, width: float | None = None,
              opacity: float | None = None, cap: str = "butt", join: str = "miter", filt: str | None = None,
-             dash: str | None = None, extra: str = "") -> str:
+             dash: str | None = None, extra: str = "", stroke_width: float | None = None) -> str:
+        # `stroke_width` accepted as an alias for `width`; see the note on line().
+        width = stroke_width if stroke_width is not None else width
         a = [f'<path d="{d}" fill="{fill}"']
         if stroke:
             a.append(f' stroke="{stroke}"')

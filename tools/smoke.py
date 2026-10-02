@@ -34,6 +34,17 @@ LAUNCH = [
     ("l08_launch", 180),
 ]
 
+# The Claude / MCP film, 34s.
+MCP = [
+    ("m01_org", 90),
+    ("m02_once", 120),
+    ("m03_idp", 150),
+    ("m04_login", 120),
+    ("m05_tools", 120),
+    ("m06_prompt", 240),
+    ("m07_packshot", 180),
+]
+
 # Values that are always a bug if they reach the SVG.
 BAD = re.compile(r"nan|inf|-0\.000|None")
 
@@ -74,20 +85,28 @@ def check_svg(svg: str) -> list[str]:
 
 
 def main() -> int:
-    scenes_dir = os.path.join(ROOT, "src", "launch")
-    if scenes_dir not in sys.path:
-        sys.path.insert(0, scenes_dir)
+    # Scene modules live in several directories; search all of them so one smoke
+    # run covers every film.
+    for sub in ("scenes", "launch", "mcp"):
+        d = os.path.join(ROOT, "src", sub)
+        if os.path.isdir(d) and d not in sys.path:
+            sys.path.insert(0, d)
 
     only = sys.argv[1:] or None
     failures = 0
     checked = 0
 
     with tempfile.TemporaryDirectory() as tmp:
-        for mod_name, dur in LAUNCH:
+        for mod_name, dur in LAUNCH + MCP:
             if only and mod_name not in only:
                 continue
-            path = os.path.join(scenes_dir, f"{mod_name}.py")
-            if not os.path.exists(path):
+            path = next(
+                (os.path.join(ROOT, "src", sub, f"{mod_name}.py")
+                 for sub in ("scenes", "launch", "mcp")
+                 if os.path.exists(os.path.join(ROOT, "src", sub, f"{mod_name}.py"))),
+                None,
+            )
+            if path is None:
                 print(f"  SKIP  {mod_name} (not written yet)")
                 continue
             try:

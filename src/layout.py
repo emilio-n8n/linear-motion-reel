@@ -48,6 +48,15 @@ FACES = {
     "JetBrainsMono-Regular": ("JetBrains Mono", Pango.Weight.NORMAL),
     "JetBrainsMono-Medium": ("JetBrains Mono", Pango.Weight.MEDIUM),
     "JetBrainsMono-Bold": ("JetBrains Mono", Pango.Weight.BOLD),
+    # Source Serif 4 — the editorial serif for the Claude / MCP film. Stands in
+    # for the commercial display serifs the brief names (Tiempos, Copernicus):
+    # the nearest well-made OFL face with the same transitional character. Note
+    # the non-default weights register as separate fontconfig families, so they
+    # are keyed separately here.
+    "SourceSerif4-Light": ("Source Serif 4 Light", Pango.Weight.NORMAL),
+    "SourceSerif4-Regular": ("Source Serif 4", Pango.Weight.NORMAL),
+    "SourceSerif4-Semibold": ("Source Serif 4 Semibold", Pango.Weight.NORMAL),
+    "SourceSerif4-Bold": ("Source Serif 4", Pango.Weight.BOLD),
 }
 
 # SVG font-weight values, for the <text> elements themselves.

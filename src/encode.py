@@ -23,27 +23,25 @@ OUT_DIR = os.path.join(ROOT, "out")
 DEFAULT_OUT = {
     "reel": "linear-craft-45s.mp4",
     "launch": "linear-launch-45s.mp4",
+    "mcp": "claude-mcp-34s.mp4",
 }
+
+# film -> total frames. MCP is a 34s film, the others 45s.
+FILM_FRAMES = {"reel": 1350, "launch": 1350, "mcp": 1020}
 
 
 def frame_dir(film: str, width: int) -> str:
-    """Matches render.py: frames are cached per film and per source width.
-
-    The width here is the width they were *rendered* at, so the encoder reads the
-    same directory the renderer wrote.
-    """
-    sub = "reel" if film == "reel" else film
-    return os.path.join(ROOT, ".build", "frames", sub, str(width))
+    """Matches render.py: frames are cached per film and per source width."""
+    return os.path.join(ROOT, ".build", "frames", film, str(width))
 
 
 def svg_dir(film: str, width: int) -> str:
-    sub = "reel" if film == "reel" else film
-    return os.path.join(ROOT, ".build", "svg", sub, str(width))
+    return os.path.join(ROOT, ".build", "svg", film, str(width))
 
 
 def source_widths(film: str) -> list[int]:
-    """Widths that actually have a complete frame set, newest-looking first."""
-    base = os.path.join(ROOT, ".build", "frames", "reel" if film == "reel" else film)
+    """Widths that have a frame directory for this film, largest first."""
+    base = os.path.join(ROOT, ".build", "frames", film)
     if not os.path.isdir(base):
         return []
     out = []
@@ -54,15 +52,17 @@ def source_widths(film: str) -> list[int]:
 
 
 def probe(film: str, width: int) -> int:
+    """Check the frame set is complete for the film's own length."""
+    total = FILM_FRAMES.get(film, TOTAL_FRAMES)
     missing = []
     d = frame_dir(film, width)
-    for i in range(TOTAL_FRAMES):
+    for i in range(total):
         if not os.path.exists(os.path.join(d, f"frame_{i:05d}.png")):
             missing.append(i)
     if missing:
         avail = source_widths(film)
         hint = f" (frames exist at: {avail})" if avail else ""
-        print(f"{len(missing)} of {TOTAL_FRAMES} frames missing at {width}px{hint}, "
+        print(f"{len(missing)} of {total} frames missing at {width}px{hint}, "
               f"first: {missing[:6]}", file=sys.stderr)
         return 1
     return 0
@@ -70,7 +70,8 @@ def probe(film: str, width: int) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Encode a frame sequence to MP4.")
-    ap.add_argument("--film", choices=("reel", "launch"), default="reel", help="which film to encode")
+    ap.add_argument("--film", choices=("reel", "launch", "mcp"), default="reel",
+                    help="which film to encode")
     ap.add_argument("--out", default=None, help="output path (default depends on --film)")
     ap.add_argument("--crf", type=int, default=17, help="quality; lower is better")
     ap.add_argument("--preset", default="slow")

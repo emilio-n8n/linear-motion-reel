@@ -22,17 +22,18 @@ import sys
 import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-for _p in (_HERE, os.path.join(_HERE, "launch")):
+# Scene module dirs, so any film's scenes can be imported by bare name.
+for _p in (_HERE, os.path.join(_HERE, "launch"), os.path.join(_HERE, "mcp")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from brand import FPS, H, TOTAL_FRAMES, W  # noqa: E402
+from brand import FPS, H, TOTAL_FRAMES, W  # noqa: E402  (W/H shared by all films)
 from stock import ensure_assets  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RSVG = "rsvg-convert"
 
-FILMS = ("reel", "launch")
+FILMS = ("reel", "launch", "mcp")
 
 
 def frame_dir(film: str, width: int) -> str:
@@ -42,27 +43,38 @@ def frame_dir(film: str, width: int) -> str:
     request, and the encode then produces a master at the wrong resolution with no
     error anywhere. The width is part of the identity of a frame.
     """
-    sub = "reel" if film == "reel" else film
-    return os.path.join(ROOT, ".build", "frames", sub, str(width))
+    return os.path.join(ROOT, ".build", "frames", film, str(width))
 
 
 def svg_dir(film: str, width: int) -> str:
-    sub = "reel" if film == "reel" else film
-    return os.path.join(ROOT, ".build", "svg", sub, str(width))
+    return os.path.join(ROOT, ".build", "svg", film, str(width))
+
+
+# film -> (timeline module, scene count). The MCP film is shorter, so it carries
+# its own total rather than using the shared 1350.
+FILM_MODULES = {
+    "reel": ("timeline", 1350),
+    "launch": ("launch_timeline", 1350),
+    "mcp": ("mcp_timeline", 1020),
+}
 
 
 def scene_list(film: str) -> list[tuple[str, int, int]]:
-    """(name, start, end) triples for either film."""
+    """(name, start, end) triples for any film."""
     if film == "reel":
         from brand import SCENES
 
         return [(n, a, b) for n, a, b in SCENES]
-    mod = importlib.import_module("launch_timeline")
+    mod = importlib.import_module(FILM_MODULES[film][0])
     return [(n, a, b) for n, _mod, a, b in mod.SCENES]
 
 
+def film_frames(film: str) -> int:
+    return FILM_MODULES[film][1]
+
+
 def frame_module(film: str) -> str:
-    return "timeline" if film == "reel" else "launch_timeline"
+    return FILM_MODULES[film][0]
 
 
 def frame_path(film: str, width: int, i: int) -> str:
@@ -108,7 +120,7 @@ def main() -> int:
     ap.add_argument("--preview", action="store_true", help="960x540, every 2nd frame (timing check)")
     ap.add_argument("--width", type=int, default=W, help="output width in px")
     ap.add_argument("--start", type=int, default=0)
-    ap.add_argument("--end", type=int, default=TOTAL_FRAMES)
+    ap.add_argument("--end", type=int, default=None, help="defaults to the film's length")
     ap.add_argument("--scene", type=str, default=None, help="render only this scene by name")
     ap.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2)))
     ap.add_argument("--keep-svg", action="store_true", help="also write the SVG for each frame")
@@ -127,7 +139,10 @@ def main() -> int:
     if args.keep_svg:
         os.makedirs(svg_dir(film, width), exist_ok=True)
 
-    start, end = args.start, min(args.end, TOTAL_FRAMES)
+    # The film's own length wins: the MCP film is 34s, the others 45s.
+    total = film_frames(film)
+    start = args.start
+    end = min(args.end if args.end is not None else total, total)
 
     if args.scene:
         for name, a, b in scenes:
@@ -143,8 +158,8 @@ def main() -> int:
     skipped = len(frames) - len(todo)
 
     label = "preview" if args.preview else f"{width}px"
-    print(f"[{film}] {label}: {len(frames)} in range, {skipped} cached at {width}px, "
-          f"{len(todo)} to render on {args.jobs} workers", flush=True)
+    print(f"[{film}] {label}: {len(frames)} of {total} in range, {skipped} cached at "
+          f"{width}px, {len(todo)} to render on {args.jobs} workers", flush=True)
 
     if not todo:
         print("nothing to do")
