@@ -39,8 +39,8 @@ def main() -> int:
     ap.add_argument("--crf", type=int, default=17, help="quality; lower is better")
     ap.add_argument("--preset", default="slow")
     ap.add_argument("--fps", type=int, default=FPS)
-    ap.add_argument("--input-fps", type=int, default=FPS, help="use 2 with --every 2 for preview encodes")
-    ap.add_argument("--every", type=int, default=1, help="encode every Nth frame (preview)")
+    ap.add_argument("--every", type=int, default=1,
+                    help="keep 1 frame in N; 3 gives a 10fps pass from 30fps source")
     ap.add_argument("--width", type=int, default=W)
     ap.add_argument("--from-svg", action="store_true", help="encode from .build/svg instead of PNG frames")
     args = ap.parse_args()
@@ -51,30 +51,39 @@ def main() -> int:
 
     width = 960 if args.width == W else args.width
     height = round(width * H / W)
+    # yuv420p needs even dimensions.
+    width += width % 2
+    height += height % 2
 
     if args.from_svg:
         if not os.path.isdir(SVG_DIR):
             print("no .build/svg directory; re-render with --keep-svg", file=sys.stderr)
             return 1
-        cmd = [
-            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-            "-framerate", str(args.input_fps),
-            "-start_number", "0",
-            "-i", os.path.join(SVG_DIR, "frame_%05d.svg"),
-        ]
+        src = os.path.join(SVG_DIR, "frame_%05d.svg")
     else:
-        cmd = [
-            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-            "-framerate", str(args.input_fps),
-            "-start_number", "0",
-            "-i", os.path.join(FRAME_DIR, "frame_%05d.png"),
-        ]
+        src = os.path.join(FRAME_DIR, "frame_%05d.png")
 
-    # Even dimensions are required by yuv420p.
-    if width % 2:
-        width += 1
+    # Read the sequence at its authored rate, then drop frames in the filter.
+    # Decimating with `select` rather than by lowering -framerate matters: a lower
+    # input rate makes ffmpeg *play* the existing files slower, which would give a
+    # 135s file instead of a 45s one.
+    cmd = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-framerate", str(FPS),
+        "-start_number", "0",
+        "-i", src,
+    ]
+
+    filters = []
+    if args.every > 1:
+        filters.append(f"select=not(mod(n\\,{args.every}))")
+    filters.append(f"scale={width}:{height}:flags=lanczos")
+    # Give the decimated stream a clean frame rate; without setpts the output
+    # inherits the input timestamps and the duration comes out wrong.
+    filters.append(f"fps={args.fps}")
+
     cmd += [
-        "-vf", f"scale={width}:{height}:flags=lanczos",
+        "-vf", ",".join(filters),
         "-c:v", "libx264",
         "-preset", args.preset,
         "-crf", str(args.crf),
@@ -91,13 +100,16 @@ def main() -> int:
         return proc.returncode
 
     size = os.path.getsize(args.out) / 1e6
-    dur = TOTAL_FRAMES / args.fps
-    print(f"wrote {args.out}  {width}x{height} @ {args.fps}fps  {dur:.1f}s  {size:.1f} MB")
+    print(f"wrote {args.out}  {width}x{height} @ {args.fps}fps  {size:.1f} MB")
 
+    # Report what was actually produced rather than what was asked for: the
+    # frame count and duration are where a decimation mistake shows up.
     probe_out = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries",
-         "stream=width,height,r_frame_rate,nb_frames,codec_name,pix_fmt",
-         "-show_entries", "format=duration", "-of", "default=nw=1", args.out],
+        ["ffprobe", "-v", "error", "-count_frames",
+         "-select_streams", "v:0",
+         "-show_entries", "stream=width,height,r_frame_rate,nb_read_frames,codec_name,pix_fmt",
+         "-show_entries", "format=duration",
+         "-of", "default=nw=1", args.out],
         capture_output=True,
     )
     print(probe_out.stdout.decode().strip())
