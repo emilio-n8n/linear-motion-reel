@@ -35,14 +35,20 @@ RSVG = "rsvg-convert"
 FILMS = ("reel", "launch")
 
 
-def frame_dir(film: str) -> str:
-    sub = "" if film == "reel" else film
-    return os.path.join(ROOT, ".build", "frames", sub) if sub else os.path.join(ROOT, ".build", "frames")
+def frame_dir(film: str, width: int) -> str:
+    """Frames are cached per film *and* per width.
+
+    Keying on the film alone means a 756px run silently satisfies a later 1920px
+    request, and the encode then produces a master at the wrong resolution with no
+    error anywhere. The width is part of the identity of a frame.
+    """
+    sub = "reel" if film == "reel" else film
+    return os.path.join(ROOT, ".build", "frames", sub, str(width))
 
 
-def svg_dir(film: str) -> str:
-    sub = "" if film == "reel" else film
-    return os.path.join(ROOT, ".build", "svg", sub) if sub else os.path.join(ROOT, ".build", "svg")
+def svg_dir(film: str, width: int) -> str:
+    sub = "reel" if film == "reel" else film
+    return os.path.join(ROOT, ".build", "svg", sub, str(width))
 
 
 def scene_list(film: str) -> list[tuple[str, int, int]]:
@@ -59,12 +65,12 @@ def frame_module(film: str) -> str:
     return "timeline" if film == "reel" else "launch_timeline"
 
 
-def frame_path(film: str, i: int) -> str:
-    return os.path.join(frame_dir(film), f"frame_{i:05d}.png")
+def frame_path(film: str, width: int, i: int) -> str:
+    return os.path.join(frame_dir(film, width), f"frame_{i:05d}.png")
 
 
-def svg_path(film: str, i: int) -> str:
-    return os.path.join(svg_dir(film), f"frame_{i:05d}.svg")
+def svg_path(film: str, width: int, i: int) -> str:
+    return os.path.join(svg_dir(film, width), f"frame_{i:05d}.svg")
 
 
 def _render_one(args: tuple[str, int, int, bool]) -> tuple[int, float, str]:
@@ -80,10 +86,10 @@ def _render_one(args: tuple[str, int, int, bool]) -> tuple[int, float, str]:
         return frame, 0.0, f"ERR build {frame}: {type(exc).__name__}: {exc}"
 
     if keep_svg:
-        with open(svg_path(film, frame), "w") as fh:
+        with open(svg_path(film, width, frame), "w") as fh:
             fh.write(svg)
 
-    out = frame_path(film, frame)
+    out = frame_path(film, width, frame)
     tmp = out + ".tmp.png"
     cmd = [RSVG, "-w", str(width), "-h", str(round(width * H / W)), "-o", tmp, "-"]
     try:
@@ -113,12 +119,14 @@ def main() -> int:
     scenes = scene_list(film)
 
     ensure_assets()
-    os.makedirs(frame_dir(film), exist_ok=True)
-    if args.keep_svg:
-        os.makedirs(svg_dir(film), exist_ok=True)
 
     width = 960 if args.preview else args.width
     step = 2 if args.preview else 1
+
+    os.makedirs(frame_dir(film, width), exist_ok=True)
+    if args.keep_svg:
+        os.makedirs(svg_dir(film, width), exist_ok=True)
+
     start, end = args.start, min(args.end, TOTAL_FRAMES)
 
     if args.scene:
@@ -131,12 +139,12 @@ def main() -> int:
             return 2
 
     frames = list(range(start, end, step))
-    todo = [f for f in frames if args.force or not os.path.exists(frame_path(film, f))]
+    todo = [f for f in frames if args.force or not os.path.exists(frame_path(film, width, f))]
     skipped = len(frames) - len(todo)
 
     label = "preview" if args.preview else f"{width}px"
-    print(f"[{film}] {label}: {len(frames)} in range, {skipped} cached, {len(todo)} to render "
-          f"on {args.jobs} workers", flush=True)
+    print(f"[{film}] {label}: {len(frames)} in range, {skipped} cached at {width}px, "
+          f"{len(todo)} to render on {args.jobs} workers", flush=True)
 
     if not todo:
         print("nothing to do")

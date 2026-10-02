@@ -26,23 +26,44 @@ DEFAULT_OUT = {
 }
 
 
-def frame_dir(film: str) -> str:
-    sub = "" if film == "reel" else film
-    return os.path.join(ROOT, ".build", "frames", sub) if sub else os.path.join(ROOT, ".build", "frames")
+def frame_dir(film: str, width: int) -> str:
+    """Matches render.py: frames are cached per film and per source width.
+
+    The width here is the width they were *rendered* at, so the encoder reads the
+    same directory the renderer wrote.
+    """
+    sub = "reel" if film == "reel" else film
+    return os.path.join(ROOT, ".build", "frames", sub, str(width))
 
 
-def svg_dir(film: str) -> str:
-    sub = "" if film == "reel" else film
-    return os.path.join(ROOT, ".build", "svg", sub) if sub else os.path.join(ROOT, ".build", "svg")
+def svg_dir(film: str, width: int) -> str:
+    sub = "reel" if film == "reel" else film
+    return os.path.join(ROOT, ".build", "svg", sub, str(width))
 
 
-def probe(film: str) -> int:
+def source_widths(film: str) -> list[int]:
+    """Widths that actually have a complete frame set, newest-looking first."""
+    base = os.path.join(ROOT, ".build", "frames", "reel" if film == "reel" else film)
+    if not os.path.isdir(base):
+        return []
+    out = []
+    for name in os.listdir(base):
+        if name.isdigit() and os.path.isdir(os.path.join(base, name)):
+            out.append(int(name))
+    return sorted(out, reverse=True)
+
+
+def probe(film: str, width: int) -> int:
     missing = []
+    d = frame_dir(film, width)
     for i in range(TOTAL_FRAMES):
-        if not os.path.exists(os.path.join(frame_dir(film), f"frame_{i:05d}.png")):
+        if not os.path.exists(os.path.join(d, f"frame_{i:05d}.png")):
             missing.append(i)
     if missing:
-        print(f"{len(missing)} of {TOTAL_FRAMES} frames missing, first: {missing[:10]}", file=sys.stderr)
+        avail = source_widths(film)
+        hint = f" (frames exist at: {avail})" if avail else ""
+        print(f"{len(missing)} of {TOTAL_FRAMES} frames missing at {width}px{hint}, "
+              f"first: {missing[:6]}", file=sys.stderr)
         return 1
     return 0
 
@@ -56,7 +77,9 @@ def main() -> int:
     ap.add_argument("--fps", type=int, default=FPS)
     ap.add_argument("--every", type=int, default=1,
                     help="keep 1 frame in N; 3 gives a 10fps pass from 30fps source")
-    ap.add_argument("--width", type=int, default=W)
+    ap.add_argument("--width", type=int, default=W, help="output width")
+    ap.add_argument("--source-width", type=int, default=None,
+                    help="width the frames were rendered at; default is the newest set present")
     ap.add_argument("--from-svg", action="store_true", help="encode from .build/svg instead of PNG frames")
     args = ap.parse_args()
 
@@ -64,11 +87,25 @@ def main() -> int:
     if args.out is None:
         args.out = os.path.join(OUT_DIR, DEFAULT_OUT[film])
 
-    if probe(film):
+    # The frames were rendered at some width; find it rather than assuming the
+    # encode width matches, because the two are independent knobs.
+    src_width = args.source_width
+    if src_width is None:
+        avail = source_widths(film)
+        if not avail:
+            print(f"no rendered frames for film {film!r}", file=sys.stderr)
+            return 1
+        src_width = avail[0]
+        print(f"[{film}] using frames at {src_width}px")
+
+    if probe(film, src_width):
         return 1
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
 
-    width = 960 if args.width == W else args.width
+    # Output size is exactly what was asked for. (A previous version forced 960
+    # whenever --width equalled the frame width, which silently produced a
+    # half-size master for a full-size request.)
+    width = args.width
     height = round(width * H / W)
     # yuv420p needs even dimensions. ffmpeg exits 187 on odd output, with an
     # error that is easy to miss, so both are forced even here rather than being
@@ -80,12 +117,12 @@ def main() -> int:
         return 2
 
     if args.from_svg:
-        if not os.path.isdir(svg_dir(film)):
+        if not os.path.isdir(svg_dir(film, src_width)):
             print("no .build/svg directory; re-render with --keep-svg", file=sys.stderr)
             return 1
-        src = os.path.join(svg_dir(film), "frame_%05d.svg")
+        src = os.path.join(svg_dir(film, src_width), "frame_%05d.svg")
     else:
-        src = os.path.join(frame_dir(film), "frame_%05d.png")
+        src = os.path.join(frame_dir(film, src_width), "frame_%05d.png")
 
     # Read the sequence at its authored rate, then drop frames in the filter.
     # Decimating with `select` rather than by lowering -framerate matters: a lower
