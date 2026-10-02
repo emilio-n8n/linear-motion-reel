@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 
+from camera import Z_BACKDROP, Z_BEHIND, Z_CONTROL, Z_NEAR, Z_RAISED, Z_SURFACE, Camera, Rig
 from components import asterisk, badge
 from easing import seg
 from layout import cap_height, glyphs, measure, svg_font
@@ -51,15 +52,27 @@ def draw(clock) -> str:
     # A barely-perceptible settle, so the closing frame is alive but still.
     settle = seg(clock.u, 0.90, 0.10, "out")
 
-    _rules(d, clear, settle)
-    if badge_in > 0:
-        _badge(d, badge_in)
-    if title_in > 0:
-        _title(d, title_in)
-    if rule > 0:
-        _rule(d, rule)
+    # A long, slow push that never stops. The packshot is the frame the viewer
+    # remembers, so it should feel like a held shot rather than a still.
+    dx, dy = Rig.drift(clock.u, amount=8.0, rate=0.45, phase=1.6)
+    cam = Camera(
+        x=W / 2 + dx,
+        y=H / 2 + dy,
+        push=Rig.dolly_in(clock.u, 0.10, 0.90, 0.20, "inout"),
+    )
+
+    with d.group(transform=cam.transform(Z_BACKDROP)):
+        _rules(d, clear, settle)
+    with d.group(transform=cam.transform(Z_SURFACE)):
+        if badge_in > 0:
+            _badge(d, badge_in)
+        if title_in > 0:
+            _title(d, title_in)
+        if rule > 0:
+            _rule(d, rule)
     if mark > 0:
-        _signature(d, clock, mark, word, settle)
+        with d.group(transform=cam.transform(Z_RAISED)):
+            _signature(d, clock, mark, word, settle)
 
     return d.render()
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 
 from components import avatar
+from camera import Z_BACKDROP, Z_BEHIND, Z_CONTROL, Z_NEAR, Z_RAISED, Z_SURFACE, Camera, Rig
 from easing import seg
 from layout import measure, svg_font
 from marks import tool_glyph
@@ -67,17 +68,30 @@ def draw(clock) -> str:
     # The validation front travels once the wiring reaches the people.
     wave = seg(clock.u, 0.56, 0.36, "inout")
 
-    _heading(d, head)
-    if panel > 0:
-        _panel(d, panel)
-    if grid > 0:
-        _people(d, grid, wave)
-    if wire_a > 0:
-        _wire(d, 0, wire_a)
-    if idp > 0:
-        _provider(d, idp)
-    if wire_b > 0:
-        _wire(d, 1, wire_b)
+    # A lateral track that follows the signal across the frame, from the
+    # interface on the left to the people on the right. The camera leads the
+    # wires slightly, so the movement feels motivated rather than synchronous.
+    dx, dy = Rig.drift(clock.u, amount=9.0, rate=0.9, phase=1.2)
+    cam = Camera(
+        x=Rig.track(720.0, 1120.0, clock.u, 0.18, 0.66, "inout") + dx,
+        y=H / 2 + 40.0 + dy,
+        push=Rig.dolly_in(clock.u, 0.05, 0.90, 0.20, "inout"),
+    )
+
+    # Everything the wires connect stays on one layer, or the arrowheads would
+    # drift off the edges they are supposed to meet.
+    with d.group(transform=cam.transform(Z_SURFACE)):
+        _heading(d, head)
+        if panel > 0:
+            _panel(d, panel)
+        if grid > 0:
+            _people(d, grid, wave)
+        if wire_a > 0:
+            _wire(d, 0, wire_a)
+        if idp > 0:
+            _provider(d, idp)
+        if wire_b > 0:
+            _wire(d, 1, wire_b)
 
     return d.render()
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 
 from components import avatar
+from camera import Z_BACKDROP, Z_BEHIND, Z_CONTROL, Z_NEAR, Z_RAISED, Z_SURFACE, Camera, Rig
 from easing import seg
 from layout import measure, svg_font
 from sketch import line, ring
@@ -32,7 +33,7 @@ from tokens import (
 # The statement carried over from M1, positioned as it ended there.
 LINE_1 = "Authorize MCP connectors"
 LINE_2 = "for your entire organization"
-TEXT_X = 640.0
+TEXT_X = 230.0
 LINE_Y = H * 0.5 - 52
 SIZE = 82.0
 
@@ -50,20 +51,37 @@ def draw(clock) -> str:
     d = Doc(bg=PAPER)
 
     statement = seg(clock.u, 0.0, 0.10, "out")
-    ring_on = seg(clock.u, 0.08, 0.28, "expo")
-    deploy = seg(clock.u, 0.38, 0.30, "inout")
-    once_in = seg(clock.u, 0.50, 0.24, "expo")
-    underline = seg(clock.u, 0.64, 0.22, "out")
-    grid = seg(clock.u, 0.40, 0.50, "out")
+    # The statement clears well before "Once" arrives: two focal points at once
+    # reads as muddle, and the carried text is the weaker of the two.
+    fade = seg(clock.u, 0.28, 0.22, "inout")
+    ring_on = seg(clock.u, 0.06, 0.26, "expo")
+    deploy = seg(clock.u, 0.34, 0.28, "inout")
+    once_in = seg(clock.u, 0.52, 0.24, "expo")
+    underline = seg(clock.u, 0.66, 0.22, "out")
+    grid = seg(clock.u, 0.34, 0.52, "out")
 
-    if statement > 0:
-        _carried(d, statement, deploy)
+    # Camera pulls back as the loop deploys, so the frame opens up rather than
+    # closing — the opposite of the first scene's push, which gives the two beats
+    # different energy without changing the vocabulary.
+    dx, dy = Rig.drift(clock.u, amount=13.0, rate=0.7, phase=2.1)
+    cam = Camera(
+        x=W / 2 + dx + 60.0 * deploy,
+        y=H / 2 + dy,
+        push=Rig.dolly_in(clock.u, 0.30, 0.60, -0.16, "inout"),
+    )
+
     if grid > 0:
-        _grid(d, grid)
-    if ring_on > 0:
-        _ring(d, ring_on, deploy)
+        with d.group(transform=cam.transform(Z_BEHIND)):
+            _grid(d, grid)
+    if statement > 0:
+        with d.group(transform=cam.transform(Z_SURFACE)):
+            _carried(d, statement, fade)
+            # The ring belongs to the text it circles, so it shares the layer.
+            if ring_on > 0:
+                _ring(d, ring_on, deploy)
     if once_in > 0:
-        _once(d, once_in, underline)
+        with d.group(transform=cam.transform(Z_RAISED)):
+            _once(d, once_in, underline)
 
     return d.render()
 
@@ -156,9 +174,11 @@ def _grid(d: Doc, u: float) -> None:
     field cannot drift into the type if either changes.
     """
     fam, _ = svg_font(SERIF)
-    once_w = measure(SERIF, ONCE_SIZE, ONCE, -4.0)
-    left = W / 2 + once_w / 2 + 90.0     # clear of the word
-    right = W - 150.0                    # margin
+    # Clear of the largest thing that ever occupies the right of the frame: the
+    # word when it is centred, and the carried statement before that.
+    line_w = measure(SERIF, SIZE, LINE_2, -0.4)
+    left = max(W / 2 + measure(SERIF, ONCE_SIZE, ONCE, -4.0) / 2, TEXT_X + line_w) + 110.0
+    right = W - 140.0                    # margin
     cols = len(AVATARS) // 3
     rows = 3
     dx = (right - left) / max(cols - 1, 1) if cols > 1 else 0.0

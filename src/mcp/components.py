@@ -48,15 +48,19 @@ RADIUS = 12.0
 
 
 def shadow(d: Doc, x: float, y: float, w: float, h: float, r: float = RADIUS,
-           lift: float = 1.0, opacity: float = 1.0) -> None:
+           lift: float = 1.0, opacity: float = 1.0, depth: float = 1.0) -> None:
     """A soft shadow under a surface.
 
     Built from three offset rounded rects at decreasing opacity rather than a
     filter: on a light background a blurred black rect at low opacity reads
     correctly, and it costs one element per layer instead of a filter definition
-    per surface.
+    per surface. rsvg has no feDropShadow, so this is the only way to get real
+    elevation.
 
-    rsvg has no feDropShadow, so this is the only way to get real elevation.
+    `depth` scales the shadow's spread and offset. Elements on the camera's
+    near layers pass their projected scale here, which is what makes them read as
+    floating above the surface rather than painted on it: a shadow that does not
+    grow with proximity reads as a drop shadow filter, not as height.
     """
     if lift <= 0.001 or opacity <= 0.001:
         return
@@ -66,10 +70,11 @@ def shadow(d: Doc, x: float, y: float, w: float, h: float, r: float = RADIUS,
         (0.0, 18.0, 50.0, 0.030),
     )
     for dy, spread, _blur, alpha in layers:
+        sp = spread * lift * depth
         d.rect(
-            x - spread * lift, y - spread * lift + dy * lift,
-            w + spread * 2 * lift, h + spread * 2 * lift,
-            fill=f"rgba(31,30,29,{alpha * opacity:.4f})", rx=r + spread * lift,
+            x - sp, y - sp + dy * lift * depth,
+            w + sp * 2, h + sp * 2,
+            fill=f"rgba(31,30,29,{alpha * opacity:.4f})", rx=r + sp,
         )
 
 
@@ -100,11 +105,15 @@ def toggle(d: Doc, x: float, y: float, w: float, h: float, on: float,
 
 
 def popover(d: Doc, x: float, y: float, w: float, h: float, reveal: float = 1.0,
-            lift: float = 1.0) -> None:
-    """A raised surface. `reveal` wipes it open from the top edge."""
+            lift: float = 1.0, depth: float = 1.0) -> None:
+    """A raised surface. `reveal` wipes it open from the top edge.
+
+    `depth` is the projected scale of the layer this sits on, so its shadow can
+    respond to the camera.
+    """
     if reveal <= 0.001:
         return
-    shadow(d, x, y, w, h, RADIUS, lift, reveal)
+    shadow(d, x, y, w, h, RADIUS, lift, reveal, depth)
     cid = d.clip_rect(x, y - 40, w, h * reveal + 40, RADIUS)
     with d.group(clip=cid):
         d.rect(x, y, w, h, fill=CARD, rx=RADIUS)
@@ -112,23 +121,46 @@ def popover(d: Doc, x: float, y: float, w: float, h: float, reveal: float = 1.0,
 
 
 def connector_row(d: Doc, x: float, y: float, w: float, key: str, name: str,
-                  on: float, opacity: float = 1.0, h: float = 46.0) -> None:
-    """One integration: glyph, name, and its own toggle."""
+                  on: float, opacity: float = 1.0, h: float = 46.0,
+                  depth: float = 1.0) -> None:
+    """One integration: glyph, name, and its own toggle.
+
+    The toggle gets a small local shadow so it reads as sitting on the surface
+    rather than being printed into it. That is the elevation cue — not a separate
+    depth layer, which would slide it out of alignment with the row.
+    """
     if opacity <= 0.01:
         return
     cy = y + h / 2
     tool_glyph(d, key, x + 26, cy, 21, opacity)
     d.text(x + 50, cy + 5.5, name, 15.0, *svg_font(SANS_MED), INK_2, opacity=opacity)
+    _control_shadow(d, x + w - 74, cy - 11, 44, 22, 11, opacity, depth)
     toggle(d, x + w - 74, cy - 11, 44, 22, on, opacity)
 
 
+def _control_shadow(d: Doc, x: float, y: float, w: float, h: float, r: float,
+                    opacity: float, depth: float = 1.0) -> None:
+    """A tight contact shadow for a small control.
+
+    Two passes only, much tighter than `shadow()`: a control sits on a surface,
+    not above the scene, so it needs a contact shadow rather than a cast one.
+    """
+    if opacity <= 0.01:
+        return
+    for spread, alpha in ((2.0, 0.05), (5.0, 0.035)):
+        sp = spread * depth
+        d.rect(x - sp, y - sp + 1.2 * depth, w + sp * 2, h + sp * 2,
+               fill=f"rgba(31,30,29,{alpha * opacity:.4f})", rx=r + sp)
+
+
 def master_row(d: Doc, x: float, y: float, w: float, label: str, on: float,
-               opacity: float = 1.0, h: float = 58.0) -> None:
+               opacity: float = 1.0, h: float = 58.0, depth: float = 1.0) -> None:
     """The organisation-wide switch at the top of the panel."""
     if opacity <= 0.01:
         return
     cy = y + h / 2
     d.text(x + 26, cy + 5.5, label, 15.5, *svg_font(SANS), INK, opacity=opacity)
+    _control_shadow(d, x + w - 80, cy - 13, 52, 26, 13, opacity, depth)
     toggle(d, x + w - 80, cy - 13, 52, 26, on, opacity)
 
 
@@ -246,7 +278,8 @@ def avatar(d: Doc, cx: float, cy: float, r: float, initials: str, fill: str,
 
 def welcome_card(d: Doc, x: float, y: float, w: float, h: float, greeting: str,
                  name: str, lift: float = 1.0, opacity: float = 1.0,
-                 suggestion: str = "", prompt: str = "", caret: bool = False) -> None:
+                 suggestion: str = "", prompt: str = "", caret: bool = False,
+                 depth: float = 1.0) -> None:
     """An employee's first-login card: greeting, asterisk, suggestion, composer.
 
     Laid out tight. A card with only a heading and a composer leaves a void in the
@@ -255,7 +288,7 @@ def welcome_card(d: Doc, x: float, y: float, w: float, h: float, greeting: str,
     """
     if opacity <= 0.01:
         return
-    shadow(d, x, y, w, h, 14.0, lift, opacity)
+    shadow(d, x, y, w, h, 14.0, lift, opacity, depth)
     d.rect(x, y, w, h, fill=CARD, rx=14.0, opacity=opacity)
     d.rect(x, y, w, h, fill="none", stroke=CARD_LINE, width=1.0, rx=14.0, opacity=opacity)
 
@@ -301,11 +334,12 @@ def welcome_card(d: Doc, x: float, y: float, w: float, h: float, greeting: str,
 
 
 def prompt_bar(d: Doc, x: float, y: float, w: float, h: float, text: str,
-               caret: bool = False, opacity: float = 1.0, sending: float = 0.0) -> None:
+               caret: bool = False, opacity: float = 1.0, sending: float = 0.0,
+               depth: float = 1.0) -> None:
     """The main composer: text, context button, send button."""
     if opacity <= 0.01:
         return
-    shadow(d, x, y, w, h, h / 2, 1.0, opacity)
+    shadow(d, x, y, w, h, h / 2, 1.0, opacity, depth)
     d.rect(x, y, w, h, fill=CARD, rx=h / 2, opacity=opacity)
     d.rect(x, y, w, h, fill="none", stroke=CARD_LINE, stroke_width=1.0, rx=h / 2, opacity=opacity)
 
@@ -334,7 +368,8 @@ def prompt_bar(d: Doc, x: float, y: float, w: float, h: float, text: str,
 
 
 def action_row(d: Doc, x: float, y: float, w: float, key: str, label: str, detail: str,
-               state: float, opacity: float = 1.0, h: float = 52.0) -> None:
+               state: float, opacity: float = 1.0, h: float = 52.0,
+               depth: float = 1.0) -> None:
     """One parallel tool action: glyph, verb, and a state that resolves.
 
     `state` 0..1 drives the whole row: it fades up, the glyph spins up, and a
@@ -347,7 +382,9 @@ def action_row(d: Doc, x: float, y: float, w: float, key: str, label: str, detai
     spin = min(state / 0.72, 1.0)
     done = max(0.0, (state - 0.72) / 0.28)
 
-    # A subtle bar rather than a card, so the list stays light on paper.
+    # A subtle bar rather than a card, so the list stays light on paper. It still
+    # gets a shadow: a row with no elevation reads as part of the background.
+    shadow(d, x, y, w, h, 12.0, 0.9, opacity * min(state * 3.0, 1.0), depth)
     d.rect(x, y, w, h, fill=CARD, rx=12.0, opacity=opacity * min(state * 3.0, 1.0))
     d.rect(x, y, w, h, fill="none", stroke=CARD_LINE, stroke_width=1.0, rx=12.0,
            opacity=opacity * min(state * 3.0, 1.0))

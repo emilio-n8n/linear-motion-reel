@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 
 from components import avatar, welcome_card
+from camera import Z_BACKDROP, Z_BEHIND, Z_CONTROL, Z_NEAR, Z_RAISED, Z_SURFACE, Camera, Rig
 from easing import seg
 from layout import measure, svg_font
 from svg import Doc
@@ -64,11 +65,23 @@ def draw(clock) -> str:
     morph = seg(clock.u, 0.44, 0.36, "expo")
     settle = seg(clock.u, 0.76, 0.22, "out")
 
-    _heading(d, head, morph)
-    if morph < 0.995:
-        _discs(d, discs, zoom, morph)
+    # A slow push through the grid. It keeps moving after the cards land, which
+    # is what stops the last beat feeling like a still.
+    dx, dy = Rig.drift(clock.u, amount=12.0, rate=0.6, phase=3.4)
+    cam = Camera(
+        x=W / 2 + dx,
+        y=H / 2 + 40.0 + dy,
+        push=Rig.dolly_in(clock.u, 0.08, 0.84, 0.26, "inout"),
+    )
+
+    with d.group(transform=cam.transform(Z_BEHIND)):
+        _heading(d, head, morph)
+        if morph < 0.995:
+            _discs(d, discs, zoom, morph)
     if morph > 0.005:
-        _cards(d, morph, settle)
+        # Each column sits on its own depth, so the grid parallaxes as a wall
+        # rather than moving as one plane.
+        _cards(d, morph, settle, cam)
 
     return d.render()
 
@@ -105,7 +118,7 @@ def _discs(d: Doc, u: float, zoom: float, morph: float) -> None:
         avatar(d, x, y, 38.0 * s, initials, colour, check=1.0, opacity=op)
 
 
-def _cards(d: Doc, morph: float, settle: float) -> None:
+def _cards(d: Doc, morph: float, settle: float, cam) -> None:
     """The welcome cards, growing out of the disc grid.
 
     Three columns, vertically centred on the frame, with the row spacing opened
@@ -137,12 +150,17 @@ def _cards(d: Doc, morph: float, settle: float) -> None:
         # still alive at the end of the scene.
         breathe = 1.0 + math.sin(settle * math.pi * 1.0 + i * 0.5) * 0.006 * settle
 
-        with d.group(
-            transform=(
-                f"translate({x + CARD_W / 2:.2f} {y + lift + CARD_H / 2:.2f}) "
-                f"scale({s * breathe:.4f}) "
-                f"translate({-(x + CARD_W / 2):.2f} {-(y + lift + CARD_H / 2):.2f})"
-            )
-        ):
-            welcome_card(d, x, y + lift, CARD_W, CARD_H, greeting, name,
-                         lift=local, opacity=local, suggestion=suggestion)
+        # Depth per column, plus the card's own grow. Composing the camera layer
+        # with the card's transform is what puts the grid in space.
+        col_z = Z_SURFACE + col * 46.0
+        with d.group(transform=cam.transform(col_z)):
+            with d.group(
+                transform=(
+                    f"translate({x + CARD_W / 2:.2f} {y + lift + CARD_H / 2:.2f}) "
+                    f"scale({s * breathe:.4f}) "
+                    f"translate({-(x + CARD_W / 2):.2f} {-(y + lift + CARD_H / 2):.2f})"
+                )
+            ):
+                welcome_card(d, x, y + lift, CARD_W, CARD_H, greeting, name,
+                             lift=local, opacity=local, suggestion=suggestion,
+                             depth=cam.scale(col_z))

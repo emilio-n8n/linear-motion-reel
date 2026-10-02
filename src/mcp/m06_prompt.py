@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 
+from camera import Z_BACKDROP, Z_BEHIND, Z_CONTROL, Z_NEAR, Z_RAISED, Z_SURFACE, Camera, Rig
 from components import action_row, asterisk, cursor_pointer, prompt_bar, tool_glyph
 from easing import seg
 from layout import measure, svg_font
@@ -65,15 +66,30 @@ def draw(clock) -> str:
 
     typed = QUERY[: max(0, int(typing * (len(QUERY) + 1)))]
 
+    # Push in on the composer while the question is typed, then pull back as the
+    # results expand — the camera makes room rather than the layout shrinking.
+    dx, dy = Rig.drift(clock.u, amount=10.0, rate=0.75, phase=2.7)
+    cam = Camera(
+        x=W / 2 + dx,
+        y=H / 2 + dy + 40.0 * clear,
+        push=1.0 + 0.24 * typing - 0.10 * clear,
+    )
+
     if arrive > 0:
-        _heading(d, arrive, clear)
-        _composer(d, typed, typing, send, clear, arrive)
+        with d.group(transform=cam.transform(Z_BACKDROP)):
+            d.rect(-100, H * 0.30, W + 200, H * 0.55, fill="#F6F2EA",
+                   opacity=0.7 * arrive * (1.0 - clear * 0.5))
+        with d.group(transform=cam.transform(Z_SURFACE)):
+            _heading(d, arrive, clear)
+            _composer(d, typed, typing, send, clear, arrive,
+                      cam.scale(Z_SURFACE))
 
     if pulse > 0 and clear > 0.02:
-        _centre_mark(d, clock, pulse, clear)
+        with d.group(transform=cam.transform(Z_NEAR)):
+            _centre_mark(d, clock, pulse, clear)
 
     if clear > 0.05:
-        _actions(d, clear, done)
+        _actions(d, clear, done, cam)
 
     return d.render()
 
@@ -91,7 +107,8 @@ def _heading(d: Doc, u: float, clear: float) -> None:
            tracking=-0.6, opacity=op)
 
 
-def _composer(d: Doc, typed: str, typing: float, send: float, clear: float, arrive: float) -> None:
+def _composer(d: Doc, typed: str, typing: float, send: float, clear: float,
+              arrive: float, depth: float = 1.0) -> None:
     """The composer, centred while typing then lifting clear of the results."""
     # Lifts and shrinks as the action list arrives, so the frame has room.
     y = H * 0.56 - 150.0 * clear
@@ -110,7 +127,7 @@ def _composer(d: Doc, typed: str, typing: float, send: float, clear: float, arri
     ):
         h = 62.0
         if len(lines) > 1:
-            prompt_bar(d, BAR_X, y - (h - 62), BAR_W, h, "", opacity=1.0)
+            prompt_bar(d, BAR_X, y - (h - 62), BAR_W, h, "", opacity=1.0, depth=depth)
             # Whichever line is last carries the caret while typing.
             last = lines[-1]
             for i, ln in enumerate(lines):
@@ -121,7 +138,8 @@ def _composer(d: Doc, typed: str, typing: float, send: float, clear: float, arri
                        fill=CORAL_DEEP, opacity=1.0)
         else:
             prompt_bar(d, BAR_X, y - 31, BAR_W, h, typed,
-                       caret=typing < 1.0 and typed != "", opacity=1.0, sending=send)
+                       caret=typing < 1.0 and typed != "", opacity=1.0, sending=send,
+                       depth=depth)
 
     # Cursor arrives on the send button and clicks.
     if send > 0.01 and clear < 0.4:
@@ -173,7 +191,7 @@ def _centre_mark(d: Doc, c, pulse: float, clear: float) -> None:
     asterisk(d, W / 2, y, r, op, CORAL)
 
 
-def _actions(d: Doc, clear: float, done: float) -> None:
+def _actions(d: Doc, clear: float, done: float, cam) -> None:
     """The four parallel jobs, then a closing line once they land."""
     n = len(ACTIONS)
     list_y = H * 0.50
@@ -189,8 +207,13 @@ def _actions(d: Doc, clear: float, done: float) -> None:
             continue
         # Rows fade in from the left, as if being added to a list.
         op = clear * min(local * 3.0, 1.0)
-        with d.group(transform=f"translate({(1.0 - min(local * 3.0, 1.0)) * -26:.2f} 0)"):
-            action_row(d, x, list_y + i * row_h, w, key, verb, detail, local, opacity=op)
+        # Rows arrive on slightly different depths, so the list has thickness
+        # rather than being one flat stack.
+        row_z = Z_SURFACE + 26.0 * i
+        with d.group(transform=cam.transform(row_z)):
+            with d.group(transform=f"translate({(1.0 - min(local * 3.0, 1.0)) * -26:.2f} 0)"):
+                action_row(d, x, list_y + i * row_h, w, key, verb, detail, local,
+                           opacity=op, depth=cam.scale(row_z))
 
     # A closing line, so the beat resolves rather than just stopping.
     if done > 0.01 and latest > 0.6:
@@ -198,5 +221,6 @@ def _actions(d: Doc, clear: float, done: float) -> None:
         fam, weight = svg_font(SERIF)
         size = LEAD
         tw = measure(SERIF, size, text, -0.4)
-        d.text(W / 2 - tw / 2, list_y + n * row_h + 46, text, size, fam, weight, INK,
-               tracking=-0.4, opacity=done)
+        with d.group(transform=cam.transform(Z_RAISED)):
+            d.text(W / 2 - tw / 2, list_y + n * row_h + 46, text, size, fam, weight, INK,
+                   tracking=-0.4, opacity=done)

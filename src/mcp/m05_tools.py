@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 
+from camera import Z_BACKDROP, Z_BEHIND, Z_CONTROL, Z_NEAR, Z_RAISED, Z_SURFACE, Camera, Rig
 from components import cursor_pointer, popover, tool_glyph, welcome_card
 from easing import seg
 from layout import measure, svg_font
@@ -62,22 +63,38 @@ def draw(clock) -> str:
     ack = seg(clock.u, 0.80, 0.12, "out")
     close = seg(clock.u, 0.92, 0.08, "in")
 
-    # One camera transform drives everything, so nothing shears.
-    z = 1.0 + 0.85 * push - 0.10 * close
-    # The card is already centred; the push-in scales about the frame centre.
-    with d.group(
-        transform=f"translate({W / 2:.2f} {H / 2:.2f}) scale({z:.4f}) translate({-W / 2:.2f} {-H / 2:.2f})",
-        opacity=arrive,
-    ):
-        _backdrop_cards(d, push)
-        welcome_card(d, W / 2 - CARD_W / 2, H / 2 - CARD_H / 2, CARD_W, CARD_H,
-                     FOCUS[0], FOCUS[1], suggestion=FOCUS[2], opacity=1.0)
-        _context_button(d, W / 2 - CARD_W / 2, H / 2 - CARD_H / 2, CARD_W, CARD_H, press)
-        if cursor_in > 0 and close < 0.5:
-            _cursor(d, cursor_in, press, close)
+    # The strongest move in the film: a real push-in toward the button, which is
+    # what the beat is about. A true dolly, so the backdrop cards fall away while
+    # the card and its control grow.
+    cx, cy = _context_pos(W / 2 - CARD_W / 2, H / 2 - CARD_H / 2, CARD_W, CARD_H)
+    dx, dy = Rig.drift(clock.u, amount=8.0, rate=1.0, phase=0.9)
+    cam = Camera(
+        x=W / 2 + dx + (cx - W / 2) * push * 0.55,
+        y=H / 2 + dy + (cy - H / 2) * push * 0.55,
+        push=1.0 + 0.85 * push - 0.10 * close,
+    )
+
+    if arrive > 0:
+        # The other cards sit well behind, so the dolly separates them.
+        with d.group(transform=cam.transform(Z_BEHIND), opacity=arrive):
+            _backdrop_cards(d, push)
+
+        with d.group(transform=cam.transform(Z_SURFACE), opacity=arrive):
+            surface = cam.scale(Z_SURFACE)
+            welcome_card(d, W / 2 - CARD_W / 2, H / 2 - CARD_H / 2, CARD_W, CARD_H,
+                         FOCUS[0], FOCUS[1], suggestion=FOCUS[2], opacity=1.0,
+                         depth=surface)
+            _context_button(d, W / 2 - CARD_W / 2, H / 2 - CARD_H / 2, CARD_W, CARD_H,
+                            press)
+
+        # The menu and the cursor float above the card.
         if menu > 0.01:
-            _menu(d, W / 2 - CARD_W / 2, H / 2 - CARD_H / 2, CARD_W, CARD_H,
-                  menu, ack, close)
+            with d.group(transform=cam.transform(Z_CONTROL)):
+                _menu(d, W / 2 - CARD_W / 2, H / 2 - CARD_H / 2, CARD_W, CARD_H,
+                      menu, ack, close, cam.scale(Z_CONTROL))
+        if cursor_in > 0 and close < 0.5:
+            with d.group(transform=cam.transform(Z_NEAR)):
+                _cursor(d, cam, cursor_in, press, close)
 
     return d.render()
 
@@ -115,11 +132,17 @@ def _context_pos(x: float, y: float, w: float, h: float) -> tuple[float, float]:
     return x + 46, y + h - 38
 
 
-def _cursor(d: Doc, u: float, press: float, close: float) -> None:
-    """Cursor travels to the button, clicks, then leaves as the menu closes."""
+def _cursor(d: Doc, cam, u: float, press: float, close: float) -> None:
+    """Cursor travels to the button, clicks, then leaves as the menu closes.
+
+    The button lives on the surface layer, so its screen position is projected
+    from there and unprojected onto the near layer the cursor is drawn on.
+    """
     x = W / 2 - CARD_W / 2
     y = H / 2 - CARD_H / 2
     bx, by = _context_pos(x, y, CARD_W, CARD_H)
+    bx, by = cam.point(bx, by, Z_SURFACE)
+    bx, by = cam.unproject(bx, by, Z_NEAR)
     approach = seg(u, 0.0, 0.7, "out")
     cx = bx + 150 * (1.0 - approach) + 60 * close
     cy = by + 110 * (1.0 - approach) + 40 * close
@@ -128,7 +151,7 @@ def _cursor(d: Doc, u: float, press: float, close: float) -> None:
 
 
 def _menu(d: Doc, cx: float, cy: float, w: float, h: float,
-          menu: float, ack: float, close: float) -> None:
+          menu: float, ack: float, close: float, depth: float = 1.0) -> None:
     """The connector menu, opening upward from the button.
 
     Positioned from the button it belongs to, so it stays anchored if the card
@@ -151,7 +174,7 @@ def _menu(d: Doc, cx: float, cy: float, w: float, h: float,
         ),
         opacity=op,
     ):
-        popover(d, mx, my, MENU_W, mh, 1.0)
+        popover(d, mx, my, MENU_W, mh, 1.0, depth=depth)
         fam, weight = svg_font(SANS)
         d.text(mx + 20, my + 28, "Context", 13.0, fam, weight, INK, tracking=0.2)
         _thumbs_up(d, mx + MENU_W - 30, my + 23, min(ack * 1.6, 1.0))
