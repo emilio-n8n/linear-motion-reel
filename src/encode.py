@@ -51,9 +51,14 @@ def main() -> int:
 
     width = 960 if args.width == W else args.width
     height = round(width * H / W)
-    # yuv420p needs even dimensions.
-    width += width % 2
-    height += height % 2
+    # yuv420p needs even dimensions. ffmpeg exits 187 on odd output, with an
+    # error that is easy to miss, so both are forced even here rather than being
+    # left to the caller to get right.
+    width -= width % 2
+    height -= height % 2
+    if width < 2 or height < 2:
+        print(f"width {args.width} is too small", file=sys.stderr)
+        return 2
 
     if args.from_svg:
         if not os.path.isdir(SVG_DIR):
@@ -93,10 +98,18 @@ def main() -> int:
         args.out,
     ]
 
-    print(" ".join(cmd))
-    proc = subprocess.run(cmd, capture_output=True)
+    print(" ".join(cmd), flush=True)
+    # stderr is streamed rather than captured: ffmpeg's real error message is
+    # what tells you why a build failed, and swallowing it behind a bare exit
+    # code makes failures undiagnosable from a notebook.
+    proc = subprocess.run(cmd, stderr=subprocess.PIPE, text=True)
     if proc.returncode != 0:
-        print(proc.stderr.decode()[:4000], file=sys.stderr)
+        err = (proc.stderr or "").strip()
+        print(f"ffmpeg exited {proc.returncode}", file=sys.stderr)
+        if err:
+            print(err, file=sys.stderr)
+        else:
+            print("(ffmpeg produced no stderr; check dimensions and the codec)", file=sys.stderr)
         return proc.returncode
 
     size = os.path.getsize(args.out) / 1e6
