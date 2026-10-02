@@ -17,15 +17,29 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from brand import FPS, H, TOTAL_FRAMES, W  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FRAME_DIR = os.path.join(ROOT, ".build", "frames")
-SVG_DIR = os.path.join(ROOT, ".build", "svg")
 OUT_DIR = os.path.join(ROOT, "out")
 
+# Default output name per film, so the two never collide in out/.
+DEFAULT_OUT = {
+    "reel": "linear-craft-45s.mp4",
+    "launch": "linear-launch-45s.mp4",
+}
 
-def probe() -> int:
+
+def frame_dir(film: str) -> str:
+    sub = "" if film == "reel" else film
+    return os.path.join(ROOT, ".build", "frames", sub) if sub else os.path.join(ROOT, ".build", "frames")
+
+
+def svg_dir(film: str) -> str:
+    sub = "" if film == "reel" else film
+    return os.path.join(ROOT, ".build", "svg", sub) if sub else os.path.join(ROOT, ".build", "svg")
+
+
+def probe(film: str) -> int:
     missing = []
     for i in range(TOTAL_FRAMES):
-        if not os.path.exists(os.path.join(FRAME_DIR, f"frame_{i:05d}.png")):
+        if not os.path.exists(os.path.join(frame_dir(film), f"frame_{i:05d}.png")):
             missing.append(i)
     if missing:
         print(f"{len(missing)} of {TOTAL_FRAMES} frames missing, first: {missing[:10]}", file=sys.stderr)
@@ -34,8 +48,9 @@ def probe() -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Encode the frame sequence to MP4.")
-    ap.add_argument("--out", default=os.path.join(OUT_DIR, "linear-craft-45s.mp4"))
+    ap = argparse.ArgumentParser(description="Encode a frame sequence to MP4.")
+    ap.add_argument("--film", choices=("reel", "launch"), default="reel", help="which film to encode")
+    ap.add_argument("--out", default=None, help="output path (default depends on --film)")
     ap.add_argument("--crf", type=int, default=17, help="quality; lower is better")
     ap.add_argument("--preset", default="slow")
     ap.add_argument("--fps", type=int, default=FPS)
@@ -45,7 +60,11 @@ def main() -> int:
     ap.add_argument("--from-svg", action="store_true", help="encode from .build/svg instead of PNG frames")
     args = ap.parse_args()
 
-    if probe():
+    film = args.film
+    if args.out is None:
+        args.out = os.path.join(OUT_DIR, DEFAULT_OUT[film])
+
+    if probe(film):
         return 1
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
 
@@ -61,12 +80,12 @@ def main() -> int:
         return 2
 
     if args.from_svg:
-        if not os.path.isdir(SVG_DIR):
+        if not os.path.isdir(svg_dir(film)):
             print("no .build/svg directory; re-render with --keep-svg", file=sys.stderr)
             return 1
-        src = os.path.join(SVG_DIR, "frame_%05d.svg")
+        src = os.path.join(svg_dir(film), "frame_%05d.svg")
     else:
-        src = os.path.join(FRAME_DIR, "frame_%05d.png")
+        src = os.path.join(frame_dir(film), "frame_%05d.png")
 
     # Read the sequence at its authored rate, then drop frames in the filter.
     # Decimating with `select` rather than by lowering -framerate matters: a lower
@@ -98,7 +117,7 @@ def main() -> int:
         args.out,
     ]
 
-    print(" ".join(cmd), flush=True)
+    print(f"[{film}] " + " ".join(cmd), flush=True)
     # stderr is streamed rather than captured: ffmpeg's real error message is
     # what tells you why a build failed, and swallowing it behind a bare exit
     # code makes failures undiagnosable from a notebook.

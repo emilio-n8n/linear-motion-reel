@@ -1,56 +1,89 @@
 #!/usr/bin/env python3
 """Frame renderer: SVG -> PNG via rsvg-convert, in parallel, resumable.
 
-Frames are written to .build/frames/frame_%05d.png. Rendering is embarrassingly
-parallel and skip-if-present, so an interrupted run continues where it stopped
-and a single scene can be re-rendered without touching the rest.
+Frames are written under .build/frames/. Rendering is embarrassingly parallel and
+skip-if-present, so an interrupted run continues where it stopped and a single
+scene can be re-rendered without touching the rest.
+
+Two films share this driver: the craft reel (src/timeline.py) and the launch film
+(src/launch/launch_timeline.py). They differ only in their scene list, so
+`--film` picks which one supplies the frames. Frame directories are namespaced
+per film so rendering one never invalidates the other's cache.
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib
 import multiprocessing as mp
 import os
 import subprocess
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+for _p in (_HERE, os.path.join(_HERE, "launch")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-from brand import FPS, H, SCENES, TOTAL_FRAMES, W  # noqa: E402
+from brand import FPS, H, TOTAL_FRAMES, W  # noqa: E402
 from stock import ensure_assets  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FRAME_DIR = os.path.join(ROOT, ".build", "frames")
-SVG_DIR = os.path.join(ROOT, ".build", "svg")
 RSVG = "rsvg-convert"
 
-
-def frame_path(i: int) -> str:
-    return os.path.join(FRAME_DIR, f"frame_{i:05d}.png")
+FILMS = ("reel", "launch")
 
 
-def svg_path(i: int) -> str:
-    return os.path.join(SVG_DIR, f"frame_{i:05d}.svg")
+def frame_dir(film: str) -> str:
+    sub = "" if film == "reel" else film
+    return os.path.join(ROOT, ".build", "frames", sub) if sub else os.path.join(ROOT, ".build", "frames")
 
 
-def _render_one(args: tuple[int, int, bool]) -> tuple[int, float, str]:
+def svg_dir(film: str) -> str:
+    sub = "" if film == "reel" else film
+    return os.path.join(ROOT, ".build", "svg", sub) if sub else os.path.join(ROOT, ".build", "svg")
+
+
+def scene_list(film: str) -> list[tuple[str, int, int]]:
+    """(name, start, end) triples for either film."""
+    if film == "reel":
+        from brand import SCENES
+
+        return [(n, a, b) for n, a, b in SCENES]
+    mod = importlib.import_module("launch_timeline")
+    return [(n, a, b) for n, _mod, a, b in mod.SCENES]
+
+
+def frame_module(film: str) -> str:
+    return "timeline" if film == "reel" else "launch_timeline"
+
+
+def frame_path(film: str, i: int) -> str:
+    return os.path.join(frame_dir(film), f"frame_{i:05d}.png")
+
+
+def svg_path(film: str, i: int) -> str:
+    return os.path.join(svg_dir(film), f"frame_{i:05d}.svg")
+
+
+def _render_one(args: tuple[str, int, int, bool]) -> tuple[int, float, str]:
     """Worker: build the SVG for one frame and rasterise it."""
-    frame, width, keep_svg = args
+    film, frame, width, keep_svg = args
     t0 = time.time()
     try:
-        # Imported in the worker so each process pays the shaping/font cost once.
-        import timeline
-
-        svg = timeline.render_frame(frame)
+        # Imported in the worker so each process pays the shaping/font cost once,
+        # and so the module is chosen per film rather than fixed at startup.
+        module = importlib.import_module(frame_module(film))
+        svg = module.render_frame(frame)
     except Exception as exc:  # noqa: BLE001
         return frame, 0.0, f"ERR build {frame}: {type(exc).__name__}: {exc}"
 
     if keep_svg:
-        with open(svg_path(frame), "w") as fh:
+        with open(svg_path(film, frame), "w") as fh:
             fh.write(svg)
 
-    out = frame_path(frame)
+    out = frame_path(film, frame)
     tmp = out + ".tmp.png"
     cmd = [RSVG, "-w", str(width), "-h", str(round(width * H / W)), "-o", tmp, "-"]
     try:
@@ -64,7 +97,8 @@ def _render_one(args: tuple[int, int, bool]) -> tuple[int, float, str]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Render frames for the Linear craft reel.")
+    ap = argparse.ArgumentParser(description="Render frames for a Linear motion film.")
+    ap.add_argument("--film", choices=FILMS, default="reel", help="which film to render")
     ap.add_argument("--preview", action="store_true", help="960x540, every 2nd frame (timing check)")
     ap.add_argument("--width", type=int, default=W, help="output width in px")
     ap.add_argument("--start", type=int, default=0)
@@ -75,30 +109,34 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="re-render frames that already exist")
     args = ap.parse_args()
 
+    film = args.film
+    scenes = scene_list(film)
+
     ensure_assets()
-    os.makedirs(FRAME_DIR, exist_ok=True)
+    os.makedirs(frame_dir(film), exist_ok=True)
     if args.keep_svg:
-        os.makedirs(SVG_DIR, exist_ok=True)
+        os.makedirs(svg_dir(film), exist_ok=True)
 
     width = 960 if args.preview else args.width
     step = 2 if args.preview else 1
     start, end = args.start, min(args.end, TOTAL_FRAMES)
 
     if args.scene:
-        for name, a, b in SCENES:
+        for name, a, b in scenes:
             if name == args.scene:
                 start, end = a, b
                 break
         else:
-            print(f"unknown scene {args.scene!r}; have {[s[0] for s in SCENES]}", file=sys.stderr)
+            print(f"unknown scene {args.scene!r}; have {[s[0] for s in scenes]}", file=sys.stderr)
             return 2
 
     frames = list(range(start, end, step))
-    todo = [f for f in frames if args.force or not os.path.exists(frame_path(f))]
+    todo = [f for f in frames if args.force or not os.path.exists(frame_path(film, f))]
     skipped = len(frames) - len(todo)
 
     label = "preview" if args.preview else f"{width}px"
-    print(f"{label}: {len(frames)} frames in range, {skipped} cached, {len(todo)} to render on {args.jobs} workers")
+    print(f"[{film}] {label}: {len(frames)} in range, {skipped} cached, {len(todo)} to render "
+          f"on {args.jobs} workers", flush=True)
 
     if not todo:
         print("nothing to do")
@@ -109,7 +147,7 @@ def main() -> int:
     errors: list[str] = []
     with mp.Pool(args.jobs) as pool:
         for frame, dt, err in pool.imap_unordered(
-            _render_one, [(f, width, args.keep_svg) for f in todo], chunksize=4
+            _render_one, [(film, f, width, args.keep_svg) for f in todo], chunksize=4
         ):
             done += 1
             if err:
